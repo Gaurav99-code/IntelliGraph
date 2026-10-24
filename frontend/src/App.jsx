@@ -3,7 +3,7 @@ import './App.css'
 import Uploader from './Uploader'
 import Chat from './Chat'
 import GraphPanel from './GraphPanel'
-import { deleteDocument, getDocuments, getGraph, queryKnowledgeBase, uploadDocuments } from './api'
+import { deleteDocument, getDocuments, getGraph, getInfrastructure, queryKnowledgeBase, uploadDocuments } from './api'
 
 const WELCOME = {
   role: 'a',
@@ -18,12 +18,14 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deletingId, setDeletingId] = useState(null)
+  const [infrastructure, setInfrastructure] = useState(null)
 
   useEffect(() => {
-    Promise.all([getDocuments(), getGraph()])
-      .then(([documentResponse, graphResponse]) => {
+    Promise.all([getDocuments(), getGraph(), getInfrastructure()])
+      .then(([documentResponse, graphResponse, infrastructureResponse]) => {
         setDocs(documentResponse.documents)
         setGraph(graphResponse)
+        setInfrastructure(infrastructureResponse)
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
@@ -35,6 +37,7 @@ export default function App() {
       const response = await uploadDocuments(files)
       setDocs((current) => [...current, ...response.documents])
       setGraph(response.graph)
+      setInfrastructure(response.backends)
       if (response.documents[0]) setFocus({ kind: 'node', id: `document:${response.documents[0].id}` })
     } catch (err) {
       setError(err.message)
@@ -47,9 +50,10 @@ export default function App() {
     setDeletingId(documentId)
     try {
       await deleteDocument(documentId)
-      const [documentResponse, graphResponse] = await Promise.all([getDocuments(), getGraph()])
+      const [documentResponse, graphResponse, infrastructureResponse] = await Promise.all([getDocuments(), getGraph(), getInfrastructure()])
       setDocs(documentResponse.documents)
       setGraph(graphResponse)
+      setInfrastructure(infrastructureResponse)
       setFocus({ kind: 'reset' })
     } catch (err) {
       setError(err.message)
@@ -79,7 +83,7 @@ export default function App() {
       <header>
         <h1>GraphRAG Knowledge Base</h1>
         <span>Topic-augmented knowledge graph</span>
-        <div className={'pill ' + (error ? 'bad' : '')}>{loading ? 'Connecting…' : error ? 'Backend unavailable' : 'Backend connected'}</div>
+        <div className={'pill ' + (error || infrastructure?.vector?.available === false ? 'bad' : '')}>{loading ? 'Connecting…' : error ? 'Backend unavailable' : infrastructure?.graph?.available ? 'Vector + Neo4j connected' : infrastructure?.vector?.available ? 'Vector connected · JSON graph fallback' : 'JSON fallback · vector unavailable'}</div>
       </header>
       {error && <div className="error">{error}</div>}
       <main>

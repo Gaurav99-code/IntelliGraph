@@ -17,6 +17,10 @@ export function getGraph() {
   return request('/api/graph')
 }
 
+export function getInfrastructure() {
+  return request('/api/infrastructure')
+}
+
 export function uploadDocuments(files) {
   const form = new FormData()
   files.forEach((file) => form.append('files', file))

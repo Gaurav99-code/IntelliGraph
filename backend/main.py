@@ -11,13 +11,26 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .document_processor import process_document
+from .graph_store import Neo4jGraphStore
 from .store import KnowledgeStore
+from .vector_store import ChromaVectorStore
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_PATH = Path(os.getenv("INTELLIGRAPH_DATA_PATH", BASE_DIR / "data" / "knowledge_base.json"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
-store = KnowledgeStore(DATA_PATH)
+CHROMA_PATH = Path(os.getenv("CHROMA_PATH", BASE_DIR / "data" / "chroma"))
+CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "intelligraph_chunks")
+NEO4J_ENABLED = os.getenv("NEO4J_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+vector_store = ChromaVectorStore(CHROMA_PATH, CHROMA_COLLECTION)
+graph_store = Neo4jGraphStore(
+    os.getenv("NEO4J_URI") if NEO4J_ENABLED else None,
+    os.getenv("NEO4J_USER") if NEO4J_ENABLED else None,
+    os.getenv("NEO4J_PASSWORD") if NEO4J_ENABLED else None,
+    os.getenv("NEO4J_DATABASE", "neo4j"),
+)
+store = KnowledgeStore(DATA_PATH, vector_store=vector_store, graph_store=graph_store)
+store.reindex_backends()
 
 
 class QueryRequest(BaseModel):
@@ -70,7 +83,15 @@ def health_check():
         "status": "success",
         "message": "IntelliGraph Backend is Running",
         "documents": len(store.documents),
+        "backends": store.backend_status(),
     }
+
+
+@app.get("/api/infrastructure")
+def infrastructure_status():
+    """Return the configured vector and graph backend status."""
+
+    return store.backend_status()
 
 
 @app.get("/api/documents")
@@ -122,7 +143,14 @@ async def upload_documents(files: list[UploadFile] = File(...)):
         stored = store.add_document(document)
         uploaded.append(store._document_summary(stored))
 
-    return {"documents": uploaded, "graph": store.graph()}
+    return {"documents": uploaded, "graph": store.graph(), "backends": store.backend_status()}
+
+
+@app.post("/api/index/rebuild")
+def rebuild_indexes():
+    """Rebuild Chroma and Neo4j indexes from the local document source of truth."""
+
+    return {"reindexed": store.reindex_backends(), "backends": store.backend_status()}
 
 
 @app.get("/api/graph")

@@ -43,10 +43,13 @@ class KnowledgeStore:
     Neo4j + ChromaDB later.
     """
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, vector_store: Any | None = None, graph_store: Any | None = None):
         self.path = path
         self._lock = Lock()
         self.documents: dict[str, dict[str, Any]] = {}
+        self.vector_store = vector_store
+        self.graph_store = graph_store
+        self.last_sync_errors: list[str] = []
         self._load()
 
     def _load(self) -> None:
@@ -71,15 +74,56 @@ class KnowledgeStore:
             document = {**document, "created_at": _now()}
             self.documents[document["id"]] = document
             self._save()
+            self._sync_document(document)
             return document
 
     def delete_document(self, document_id: str) -> bool:
         with self._lock:
             existed = document_id in self.documents
             if existed:
+                self._delete_from_backends(document_id)
                 del self.documents[document_id]
                 self._save()
             return existed
+
+    def _sync_document(self, document: dict[str, Any]) -> None:
+        self.last_sync_errors = []
+        for backend, operation in (
+            (self.vector_store, "upsert_document"),
+            (self.graph_store, "sync_document"),
+        ):
+            if backend is None:
+                continue
+            try:
+                getattr(backend, operation)(document)
+            except Exception as exc:  # pragma: no cover - service dependent
+                self.last_sync_errors.append(f"{backend.__class__.__name__}: {exc}")
+
+    def _delete_from_backends(self, document_id: str) -> None:
+        self.last_sync_errors = []
+        for backend in (self.vector_store, self.graph_store):
+            if backend is None:
+                continue
+            try:
+                backend.delete_document(document_id)
+            except Exception as exc:  # pragma: no cover - service dependent
+                self.last_sync_errors.append(f"{backend.__class__.__name__}: {exc}")
+
+    def reindex_backends(self) -> dict[str, Any]:
+        """Mirror JSON documents into configured vector and graph backends."""
+
+        errors: list[str] = []
+        for document in self.documents.values():
+            self._sync_document(document)
+            errors.extend(self.last_sync_errors)
+        return {"documents": len(self.documents), "errors": errors}
+
+    def backend_status(self) -> dict[str, Any]:
+        return {
+            "vector": self.vector_store.status() if self.vector_store else {"available": False, "provider": "none"},
+            "graph": self.graph_store.status() if self.graph_store else {"available": False, "provider": "none"},
+            "sync_errors": self.last_sync_errors,
+        }
 
     def list_documents(self) -> list[dict[str, Any]]:
         return [self._document_summary(document) for document in self.documents.values()]
@@ -100,6 +144,13 @@ class KnowledgeStore:
         }
 
     def graph(self, document_id: str | None = None) -> dict[str, list[dict[str, Any]]]:
+        if self.graph_store is not None and getattr(self.graph_store, "available", False):
+            try:
+                graph = self.graph_store.graph(document_id=document_id)
+                if graph["nodes"] or graph["edges"]:
+                    return graph
+            except Exception as exc:  # pragma: no cover - service dependent
+                self.last_sync_errors.append(f"{self.graph_store.__class__.__name__}: {exc}")
         documents = [self.documents[document_id]] if document_id and document_id in self.documents else list(self.documents.values())
         nodes: dict[str, dict[str, Any]] = {}
         edges: dict[str, dict[str, Any]] = {}
@@ -154,23 +205,32 @@ class KnowledgeStore:
         route = "thematic" if query_terms.intersection(thematic_markers) else "factual"
         matches: list[dict[str, Any]] = []
 
-        for document in self.documents.values():
-            for chunk in document.get("chunks", []):
-                chunk_terms = _terms(chunk["text"])
-                overlap = len(query_terms & chunk_terms)
-                if overlap == 0:
-                    continue
-                # A mild length normalization favors focused chunks over long ones.
-                score = overlap / math.sqrt(max(len(chunk_terms), 1))
-                matches.append({
-                    "document_id": document["id"],
-                    "document_name": document["name"],
-                    "chunk_id": chunk["id"],
-                    "chunk_index": chunk["index"],
-                    "text": chunk["text"],
-                    "score": round(score, 4),
-                    "matched_terms": sorted(query_terms & chunk_terms),
-                })
+        if self.vector_store is not None and getattr(self.vector_store, "available", False):
+            try:
+                matches = self.vector_store.query(question, top_k)
+                for match in matches:
+                    match["matched_terms"] = sorted(query_terms & _terms(match["text"]))
+            except Exception as exc:  # pragma: no cover - service dependent
+                self.last_sync_errors.append(f"{self.vector_store.__class__.__name__}: {exc}")
+
+        if not matches:
+            for document in self.documents.values():
+                for chunk in document.get("chunks", []):
+                    chunk_terms = _terms(chunk["text"])
+                    overlap = len(query_terms & chunk_terms)
+                    if overlap == 0:
+                        continue
+                    # A mild length normalization favors focused chunks over long ones.
+                    score = overlap / math.sqrt(max(len(chunk_terms), 1))
+                    matches.append({
+                        "document_id": document["id"],
+                        "document_name": document["name"],
+                        "chunk_id": chunk["id"],
+                        "chunk_index": chunk["index"],
+                        "text": chunk["text"],
+                        "score": round(score, 4),
+                        "matched_terms": sorted(query_terms & chunk_terms),
+                    })
 
         matches.sort(key=lambda match: match["score"], reverse=True)
         matches = matches[: max(1, min(top_k, 20))]
