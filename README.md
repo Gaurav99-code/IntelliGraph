@@ -1,23 +1,129 @@
 # IntelliGraph
 
-Topic-Augmented Knowledge Graph Builder with a React/Vite frontend and FastAPI
-backend. The backend extracts topics, entities, and relationships from PDF/text
-uploads, stores chunks in ChromaDB for vector-similarity retrieval, mirrors graph data to
-Neo4j when enabled, routes thematic or factual questions, and returns supporting
-graph edges for the frontend. JSON remains the local source of truth and keeps
-the app usable when Neo4j is not running.
+IntelliGraph is an interactive, topic-augmented knowledge base for turning PDFs
+and text documents into explainable answers. It combines document extraction,
+vector retrieval, graph evidence, local LLM generation, citations, and an
+interactive React interface.
 
-## Run locally
+## What the demo does
+
+```text
+Upload PDF/text
+      ↓
+Parse and chunk the document
+      ↓
+Extract topics, entities, and relationships
+      ↓
+Index chunks in ChromaDB and graph data in JSON/Neo4j
+      ↓
+Retrieve relevant evidence for a question
+      ↓
+Generate a grounded answer with citations
+      ↓
+Show source excerpts and graph relationships in the UI
+```
+
+The answer generator is evidence-first: it is instructed to use only retrieved
+source text and validated citation IDs. If the LLM is disabled or unavailable,
+IntelliGraph returns an extractive answer from the best retrieved source instead
+of failing the query.
+
+## Features
+
+- PDF and text upload with per-document extraction status.
+- Topic, entity, and relationship extraction.
+- ChromaDB vector retrieval.
+- Sentence-Transformers embeddings:
+  - `BAAI/bge-small-en-v1.5` preferred model.
+  - `all-MiniLM-L6-v2` fallback model.
+- Local Ollama support through the OpenAI-compatible API.
+- Grounded answer generation with:
+  - `answer`
+  - `sources`
+  - `citations`
+  - `topics`
+  - `graph_paths`
+  - `answer_method`
+  - `confidence`
+  - `insufficient_evidence`
+- Extractive fallback when Ollama is disabled, unavailable, times out, or
+  returns malformed JSON.
+- Interactive D3 graph with evidence highlighting and node details.
+- Source excerpts with searched terms highlighted.
+- Clickable source and graph evidence navigation.
+- Dynamic question suggestions based on uploaded documents and topics.
+- Separate fullscreen views for the research workspace and graph.
+- Animated empty graph state that explains the Read → Connect → Explain flow.
+- In-app **See logs** viewer for backend and frontend activity.
+
+## Requirements
+
+- Python 3.11+ recommended.
+- Node.js and npm.
+- Optional: Ollama for local answer generation.
+- Optional: Docker Desktop for Neo4j.
+
+## Local setup
+
+From the repository root:
 
 ```powershell
 venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+### Recommended: local Ollama mode
+
+Install Ollama, then pull a model:
+
+```powershell
+ollama --version
+ollama pull llama3.2
+ollama list
+```
+
+Configure `.env` for local inference:
+
+```env
+LLM_ENABLED=true
+LLM_PROVIDER=ollama
+LLM_MODEL=llama3.2
+LLM_BASE_URL=http://localhost:11434/v1
+LLM_API_KEY=
+LLM_TIMEOUT_SECONDS=120
+LLM_MAX_RETRIES=2
+```
+
+Ollama local mode does not require a real cloud API key. The backend uses the
+OpenAI-compatible client with a local placeholder key internally; no key is
+sent to the frontend.
+
+If Ollama is unavailable, set:
+
+```env
+LLM_ENABLED=false
+```
+
+The upload and query flows continue using heuristic extraction and extractive
+answer fallback.
+
+### Start the backend
+
+```powershell
 venv\Scripts\python.exe -m uvicorn backend.main:app --reload --env-file .env
 ```
 
-The API is available at `http://localhost:8000`; interactive OpenAPI docs are
-at `http://localhost:8000/docs`.
+Backend endpoints:
 
-Start the frontend in a second terminal:
+```text
+http://localhost:8000
+http://localhost:8000/docs
+http://localhost:8000/api/health
+```
+
+### Start the frontend
+
+In a second terminal:
 
 ```powershell
 cd frontend
@@ -25,81 +131,222 @@ npm install
 npm run dev
 ```
 
-The frontend is available at `http://localhost:5173`.
+Frontend URL:
 
-## Phase 1: ChromaDB and Neo4j
+```text
+http://localhost:5173
+```
 
-ChromaDB runs as a local persistent vector index at `data/chroma` by default. It
-uses the deterministic feature-hash embedding adapter in
-`backend/embeddings.py`, which is kept small and offline-friendly so the first
-run does not download a model. A production embedding model can replace this
-adapter in a later phase without changing the Chroma integration.
+To use another backend URL:
 
-Neo4j is optional during local development. To enable it:
+```powershell
+$env:VITE_API_BASE_URL="http://localhost:8000"
+npm run dev
+```
+
+## Demo workflow
+
+1. Open `http://localhost:5173`.
+2. Upload one or more PDFs from the upload area.
+3. Use the dynamic suggestion chips or type a question.
+4. Inspect the grounded answer and answer method.
+5. Open a source card to view the focused excerpt and highlighted terms.
+6. Click **Focus document in graph** to navigate the graph.
+7. Click a graph relationship to focus its source and target nodes.
+8. Use **Expand** to open the research or graph section fullscreen.
+9. Use **See logs** to inspect recent backend/frontend activity.
+
+Example questions:
+
+```text
+What does metformin do?
+How are obesity and insulin resistance related?
+What are the main themes across these documents?
+Summarize the key findings in the uploaded documents.
+```
+
+## API contract
+
+### Health and infrastructure
+
+```text
+GET /api/health
+GET /api/infrastructure
+```
+
+`/api/infrastructure` reports vector, graph, embedding, LLM, and extraction
+status. If an older backend process does not expose `/api/infrastructure`, the
+frontend can use the backend status included in `/api/health`.
+
+### Upload
+
+```text
+POST /api/documents/upload
+```
+
+Multipart field:
+
+```text
+files
+```
+
+Accepted formats include PDF, TXT, Markdown, CSV, and JSON.
+
+### Query
+
+```text
+POST /api/query
+Content-Type: application/json
+```
+
+Request:
+
+```json
+{
+  "question": "What does metformin do?",
+  "top_k": 5
+}
+```
+
+Response fields:
+
+```json
+{
+  "question": "What does metformin do?",
+  "answer": "Metformin improves insulin sensitivity and reduces hepatic glucose production.",
+  "route": "factual",
+  "sources": [],
+  "citations": [],
+  "topics": [],
+  "graph_paths": [],
+  "answer_method": "llm",
+  "confidence": 0.86,
+  "insufficient_evidence": false
+}
+```
+
+`answer_method` is either `llm` or `extractive`. When no grounded source is
+available, `insufficient_evidence` is `true` and the API returns a clear
+insufficient-evidence message instead of inventing an answer.
+
+### Logs
+
+The backend creates rotating local logs:
+
+```text
+logs/backend.log
+logs/frontend.log
+```
+
+Log endpoints:
+
+```text
+GET /api/logs?source=all
+GET /api/logs?source=backend
+GET /api/logs?source=frontend
+POST /api/logs/client
+```
+
+The UI's **See logs** button provides a tabbed, scrollable log viewer. Query
+contents are not written to logs; only safe metadata such as question length and
+request status is recorded.
+
+## Storage and optional Neo4j
+
+JSON remains the local source of truth. Runtime data is stored under `data/`:
+
+```text
+data/knowledge_base.json
+data/chroma/
+data/extraction_cache.json
+```
+
+Neo4j is optional. To enable it:
 
 ```powershell
 docker compose up -d neo4j
 ```
 
-Copy `.env.example` to `.env`, set `NEO4J_ENABLED=true`, and keep the matching
-Neo4j password. Then restart the backend. Existing JSON documents are mirrored
-into both indexes at startup. The status is available at:
+Then configure `.env`:
 
-```text
-GET /api/infrastructure
+```env
+NEO4J_ENABLED=true
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=change-this-password
+NEO4J_DATABASE=neo4j
 ```
 
-If Neo4j is unavailable, the API reports the error and continues using the JSON
-graph fallback. `POST /api/index/rebuild` replays all stored documents into the
-configured backends after a service is restored.
-
-## Phase 2: structured extraction and embeddings
-
-The default Phase 2 provider is OpenAI-compatible JSON generation. Configure it
-only through `.env`:
+If Neo4j is unavailable, IntelliGraph continues with the JSON graph fallback.
+Use this endpoint after restoring a backend:
 
 ```text
-LLM_ENABLED=true
-LLM_PROVIDER=openai
-LLM_API_KEY=your-key
-LLM_MODEL=gpt-4o-mini
+POST /api/index/rebuild
 ```
 
-When the key is missing, `LLM_ENABLED=false`, or an individual call fails, the
-upload continues with the heuristic extractor and records
-`extraction_method=heuristic` for that chunk. Successful structured calls are
-recorded as `extraction_method=llm`. Results are cached by SHA-256 in
-`data/extraction_cache.json`.
+## Project checks
 
-Entity names are normalized and resolved with typed compatibility checks,
-RapidFuzz, and embedding similarity. The preferred embedding model is
-`BAAI/bge-small-en-v1.5`, with `all-MiniLM-L6-v2` and then the existing hash
-embedding as fallbacks. The model name is stored in Chroma collection metadata;
-changing it causes the collection to rebuild.
+Run backend checks from the repository root:
 
-## Frontend integration contract
+```powershell
+venv\Scripts\python.exe -m pytest -q
+venv\Scripts\python.exe -m compileall -q backend tests
+git diff --check
+```
 
-- `GET /api/health` — health and document count.
-- `POST /api/documents/upload` — multipart field `files`, accepts PDF/text.
-- `GET /api/documents` — document cards/list.
-- `DELETE /api/documents/{document_id}` — remove an uploaded document.
-- `GET /api/graph` — `{nodes, edges}` for the graph visualization.
-- `GET /api/graph/nodes/{node_id}` — selected node and connected edges.
-- `POST /api/query` — JSON `{ "question": "...", "top_k": 5 }`; returns the
-  answer, route, sources, topics, and `graph_paths` for highlighting evidence.
-- `GET /api/infrastructure` — ChromaDB/Neo4j availability and index counts.
-- `POST /api/index/rebuild` — rebuild configured indexes from JSON documents.
+Run frontend checks from `frontend/`:
 
-The frontend supports document upload/removal, live document/topic/entity graph
-rendering, factual/thematic query routing, grounded sources, and evidence-path
-highlighting. The CORS defaults support common Vite and Create React App
-development ports.
+```powershell
+npm run lint
+npm run build
+```
 
-## Design note
+The project virtual environment is the supported test environment. On machines
+where system Python does not have pytest installed, `python -m pytest -q` will
+fail before collecting tests; use the `venv\Scripts\python.exe` command above.
 
-The extraction layer is still deterministic for now; Phase 1 focuses on real
-vector and graph infrastructure. The extraction and storage boundaries are
-isolated in `backend/document_processor.py`, `backend/vector_store.py`,
-`backend/graph_store.py`, and `backend/store.py`, making it possible to replace
-the embedding or extraction provider in a later phase without changing the
-frontend contract.
+## Presentation deck
+
+The completed Hypnexis26 presentation is available at:
+
+```text
+reports/IntelliGraph_Hypnexis26_Deck.pptx
+```
+
+The deck was generated from the official template using:
+
+```text
+tools/build_hypnexis_deck.py
+```
+
+## Repository layout
+
+```text
+backend/
+  answer_generator.py     Grounded LLM answer generation and fallback
+  document_processor.py   PDF/text parsing and extraction
+  embedding_service.py    Sentence-Transformer and fallback embeddings
+  graph_store.py          Optional Neo4j adapter
+  llm_client.py           OpenAI-compatible and Ollama client
+  logging_config.py       Rotating backend/frontend log setup
+  main.py                 FastAPI routes and middleware
+  store.py                JSON source of truth and hybrid retrieval
+  vector_store.py         ChromaDB integration
+
+frontend/src/
+  App.jsx                 Application orchestration
+  Chat.jsx                Chat, citations, excerpts, and evidence UI
+  GraphPanel.jsx          D3 graph and node detail panel
+  LogViewer.jsx           In-app log viewer
+  api.js                  Backend API client
+
+tests/
+  test_api.py             Upload/query/fallback/log endpoint tests
+  test_answer_generator.py
+  test_document_processor.py
+  test_entity_resolution.py
+  test_llm_client.py
+
+reports/
+  IntelliGraph_Hypnexis26_Deck.pptx
+```
