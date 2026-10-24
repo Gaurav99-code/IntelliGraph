@@ -40,6 +40,15 @@ def test_cache_hit_skips_llm_call(tmp_path: Path):
     assert document["extraction_method"] == "llm"
 
 
+def test_llm_enabled_run_upgrades_heuristic_cache(tmp_path: Path):
+    cache = tmp_path / "extraction_cache.json"
+    process_document("doc-1", "a.txt", b"Metformin improves insulin sensitivity.", CountingLLM(fail=True), cache)
+    successful = CountingLLM()
+    document = process_document("doc-2", "a.txt", b"Metformin improves insulin sensitivity.", successful, cache)
+    assert successful.calls == 1
+    assert document["extraction_method"] == "llm"
+
+
 def test_llm_failure_falls_back_without_failing_upload(tmp_path: Path):
     document = process_document(
         "doc-1",

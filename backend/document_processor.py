@@ -273,7 +273,11 @@ def process_document(
         cache_key = hashlib.sha256(chunk.encode("utf-8")).hexdigest()
         cached = cache.get(cache_key)
         if cached and isinstance(cached, dict) and "result" in cached:
-            return index, _apply_trace(cached["result"], document_id, chunk_id), cached.get("extraction_method", "heuristic")
+            cached_method = cached.get("extraction_method", "heuristic")
+            # A later LLM-enabled run must be allowed to upgrade an older
+            # heuristic cache entry; successful LLM entries remain cache hits.
+            if not (llm_allowed and cached_method == "heuristic"):
+                return index, _apply_trace(cached["result"], document_id, chunk_id), cached_method
         method = "heuristic"
         try:
             if llm_allowed:
