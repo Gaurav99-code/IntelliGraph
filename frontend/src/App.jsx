@@ -20,6 +20,13 @@ export default function App() {
   const [deletingId, setDeletingId] = useState(null)
   const [infrastructure, setInfrastructure] = useState(null)
 
+  const extractionLabel = () => {
+    const counts = infrastructure?.extraction_method_counts || {}
+    if (counts.llm && counts.heuristic) return 'LLM + heuristic fallback'
+    if (counts.llm) return 'LLM extraction'
+    return 'Heuristic fallback'
+  }
+
   useEffect(() => {
     Promise.all([getDocuments(), getGraph(), getInfrastructure()])
       .then(([documentResponse, graphResponse, infrastructureResponse]) => {
@@ -83,7 +90,7 @@ export default function App() {
       <header>
         <h1>GraphRAG Knowledge Base</h1>
         <span>Topic-augmented knowledge graph</span>
-        <div className={'pill ' + (error || infrastructure?.vector?.available === false ? 'bad' : '')}>{loading ? 'Connecting…' : error ? 'Backend unavailable' : infrastructure?.graph?.available ? 'Vector + Neo4j connected' : infrastructure?.vector?.available ? 'Vector connected · JSON graph fallback' : 'JSON fallback · vector unavailable'}</div>
+        <div className={'pill ' + (error || infrastructure?.vector?.available === false ? 'bad' : '')}>{loading ? 'Connecting…' : error ? 'Backend unavailable' : `${extractionLabel()} · ${infrastructure?.graph?.available ? 'Vector + Neo4j' : infrastructure?.vector?.available ? 'Vector + JSON graph' : 'JSON fallback'}`}</div>
       </header>
       {error && <div className="error">{error}</div>}
       <main>

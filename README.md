@@ -53,6 +53,30 @@ If Neo4j is unavailable, the API reports the error and continues using the JSON
 graph fallback. `POST /api/index/rebuild` replays all stored documents into the
 configured backends after a service is restored.
 
+## Phase 2: structured extraction and embeddings
+
+The default Phase 2 provider is OpenAI-compatible JSON generation. Configure it
+only through `.env`:
+
+```text
+LLM_ENABLED=true
+LLM_PROVIDER=openai
+LLM_API_KEY=your-key
+LLM_MODEL=gpt-4o-mini
+```
+
+When the key is missing, `LLM_ENABLED=false`, or an individual call fails, the
+upload continues with the heuristic extractor and records
+`extraction_method=heuristic` for that chunk. Successful structured calls are
+recorded as `extraction_method=llm`. Results are cached by SHA-256 in
+`data/extraction_cache.json`.
+
+Entity names are normalized and resolved with typed compatibility checks,
+RapidFuzz, and embedding similarity. The preferred embedding model is
+`BAAI/bge-small-en-v1.5`, with `all-MiniLM-L6-v2` and then the existing hash
+embedding as fallbacks. The model name is stored in Chroma collection metadata;
+changing it causes the collection to rebuild.
+
 ## Frontend integration contract
 
 - `GET /api/health` — health and document count.

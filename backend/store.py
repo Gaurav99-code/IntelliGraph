@@ -125,6 +125,14 @@ class KnowledgeStore:
             "sync_errors": self.last_sync_errors,
         }
 
+    def extraction_method_counts(self) -> dict[str, int]:
+        """Count processed chunks by extraction method across stored documents."""
+
+        counts: Counter[str] = Counter()
+        for document in self.documents.values():
+            counts.update(document.get("extraction_method_counts", {}))
+        return dict(counts)
+
     def list_documents(self) -> list[dict[str, Any]]:
         return [self._document_summary(document) for document in self.documents.values()]
 
@@ -141,6 +149,8 @@ class KnowledgeStore:
             "chunks": len(document.get("chunks", [])),
             "topics": [topic["label"] for topic in document.get("topics", [])],
             "entities": len(document.get("entities", [])),
+            "extraction_method": document.get("extraction_method", "heuristic"),
+            "extraction_method_counts": document.get("extraction_method_counts", {}),
         }
 
     def graph(self, document_id: str | None = None) -> dict[str, list[dict[str, Any]]]:
@@ -170,21 +180,47 @@ class KnowledgeStore:
 
         for document in documents:
             document_node = f"document:{document['id']}"
-            add_node(document_node, document["name"], "document")
+            add_node(document_node, document["name"], "document", extraction_method=document.get("extraction_method", "heuristic"))
             for topic in document.get("topics", []):
                 add_node(topic["id"], topic["label"], "topic", score=topic.get("score", 1))
                 add_edge(document_node, topic["id"], "has topic")
             entity_ids: dict[str, str] = {}
             for entity in document.get("entities", []):
-                entity_id = f"entity:{re.sub(r'[^a-z0-9]+', '-', entity.lower()).strip('-')}"
-                entity_ids[entity.casefold()] = entity_id
-                add_node(entity_id, entity, "entity")
+                entity_name = entity["name"] if isinstance(entity, dict) else entity
+                entity_id = f"entity:{re.sub(r'[^a-z0-9]+', '-', entity_name.lower()).strip('-')}"
+                entity_ids[entity_name.casefold()] = entity_id
+                add_node(
+                    entity_id,
+                    entity_name,
+                    "entity",
+                    entity_type=entity.get("type", "Other") if isinstance(entity, dict) else "Other",
+                    description=entity.get("description", "") if isinstance(entity, dict) else "",
+                    aliases=entity.get("aliases", []) if isinstance(entity, dict) else [],
+                    extraction_method=document.get("extraction_method", "heuristic"),
+                )
                 add_edge(document_node, entity_id, "mentions")
             for relationship in document.get("relationships", []):
-                source = entity_ids.get(relationship["source"].casefold())
-                target = entity_ids.get(relationship["target"].casefold())
+                source_name = relationship.get("source", relationship.get("subject", ""))
+                target_name = relationship.get("target", relationship.get("object", ""))
+                source = entity_ids.get(source_name.casefold())
+                target = entity_ids.get(target_name.casefold())
                 if source and target:
-                    add_edge(source, target, relationship["relation"])
+                    edge_id = f"{source}|{relationship['relation']}|{target}|{relationship.get('chunk_id', '')}"
+                    edge = edges.setdefault(
+                        edge_id,
+                        {
+                            "id": edge_id,
+                            "source": source,
+                            "target": target,
+                            "label": relationship["relation"],
+                            "weight": 0,
+                            "evidence": relationship.get("evidence", ""),
+                            "document_id": relationship.get("doc_id", document["id"]),
+                            "chunk_id": relationship.get("chunk_id", ""),
+                            "extraction_method": document.get("extraction_method", "heuristic"),
+                        },
+                    )
+                    edge["weight"] += 1
 
         return {"nodes": list(nodes.values()), "edges": list(edges.values())}
 

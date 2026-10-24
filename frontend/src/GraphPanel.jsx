@@ -7,10 +7,24 @@ const TYPE_META = {
   entity: { label: 'Entities', color: '#1D9E75' },
 }
 
+const ENTITY_TYPE_COLORS = {
+  Person: '#e07a5f',
+  Organization: '#6c63ff',
+  Concept: '#1D9E75',
+  Condition: '#d1495b',
+  Medication: '#3b82f6',
+  Treatment: '#2a9d8f',
+  Biomarker: '#f4a261',
+  Study: '#8338ec',
+  Technology: '#118ab2',
+  Location: '#8d99ae',
+  Other: '#6f6d66',
+}
+
 const idOf = (value) => (typeof value === 'object' ? value.id : value)
 const edgeKey = (edge) => edge.id || `${idOf(edge.source)}|${edge.label}|${idOf(edge.target)}`
-const colorOf = (node) => TYPE_META[node.type]?.color || '#8a8880'
-const labelOf = (node) => TYPE_META[node.type]?.label || 'Graph'
+const colorOf = (node) => node.type === 'entity' ? ENTITY_TYPE_COLORS[node.entity_type] || ENTITY_TYPE_COLORS.Other : TYPE_META[node.type]?.color || '#8a8880'
+const labelOf = (node) => node.type === 'entity' ? node.entity_type || 'Entity' : TYPE_META[node.type]?.label || 'Graph'
 const css = (value) => getComputedStyle(document.documentElement).getPropertyValue(value).trim()
 
 function computeHighlight(focus, nodes, links) {
@@ -229,7 +243,7 @@ export default function GraphPanel({ focus, setFocus, graph }) {
         <button className="leg" onClick={() => setFocus({ kind: 'reset' })}>Reset view</button>
       </div>
       <div className="tip" ref={tip} />
-      {info && <div className="info"><h3>{info.node.label}</h3><div className="t">{labelOf(info.node)} · {info.neighbours.length} connections</div><ul>{info.neighbours.slice(0, 6).map((item, index) => <li key={index}>{item.out ? item.link.label || 'connects to' : `← ${item.link.label || 'connects to'}`} <b>{item.node?.label || 'unknown'}</b></li>)}</ul></div>}
+      {info && <div className="info"><h3>{info.node.label}</h3><div className="t">{labelOf(info.node)} · {info.neighbours.length} connections</div>{info.node.description && <div>{info.node.description}</div>}{info.node.aliases?.length > 0 && <div className="t">Aliases: {info.node.aliases.join(', ')}</div>}<ul>{info.neighbours.slice(0, 6).map((item, index) => <li key={index}>{item.out ? item.link.label || 'connects to' : `← ${item.link.label || 'connects to'}`} <b>{item.node?.label || 'unknown'}</b></li>)}</ul></div>}
     </div>
   )
 }

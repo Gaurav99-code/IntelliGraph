@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from .document_processor import process_document
 from .graph_store import Neo4jGraphStore
+from .llm_client import LLMClient
 from .store import KnowledgeStore
 from .vector_store import ChromaVectorStore
 
@@ -23,6 +24,7 @@ CHROMA_PATH = Path(os.getenv("CHROMA_PATH", BASE_DIR / "data" / "chroma"))
 CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "intelligraph_chunks")
 NEO4J_ENABLED = os.getenv("NEO4J_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 vector_store = ChromaVectorStore(CHROMA_PATH, CHROMA_COLLECTION)
+llm_client = LLMClient.from_env()
 graph_store = Neo4jGraphStore(
     os.getenv("NEO4J_URI") if NEO4J_ENABLED else None,
     os.getenv("NEO4J_USER") if NEO4J_ENABLED else None,
@@ -31,6 +33,16 @@ graph_store = Neo4jGraphStore(
 )
 store = KnowledgeStore(DATA_PATH, vector_store=vector_store, graph_store=graph_store)
 store.reindex_backends()
+
+
+def build_infrastructure_status() -> dict:
+    """Return safe status for every extraction and persistence backend."""
+
+    status = store.backend_status()
+    status.update(llm_client.status())
+    status["embedding_model"] = status["vector"].get("embedding_model")
+    status["extraction_method_counts"] = store.extraction_method_counts()
+    return status
 
 
 class QueryRequest(BaseModel):
@@ -83,7 +95,7 @@ def health_check():
         "status": "success",
         "message": "IntelliGraph Backend is Running",
         "documents": len(store.documents),
-        "backends": store.backend_status(),
+        "backends": build_infrastructure_status(),
     }
 
 
@@ -91,7 +103,7 @@ def health_check():
 def infrastructure_status():
     """Return the configured vector and graph backend status."""
 
-    return store.backend_status()
+    return build_infrastructure_status()
 
 
 @app.get("/api/documents")
@@ -137,20 +149,20 @@ async def upload_documents(files: list[UploadFile] = File(...)):
             )
         filename = file.filename or "untitled.txt"
         try:
-            document = process_document(str(uuid4()), filename, content)
+            document = process_document(str(uuid4()), filename, content, llm_client=llm_client)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=f"Could not process {filename}: {exc}") from exc
         stored = store.add_document(document)
         uploaded.append(store._document_summary(stored))
 
-    return {"documents": uploaded, "graph": store.graph(), "backends": store.backend_status()}
+    return {"documents": uploaded, "graph": store.graph(), "backends": build_infrastructure_status()}
 
 
 @app.post("/api/index/rebuild")
 def rebuild_indexes():
     """Rebuild Chroma and Neo4j indexes from the local document source of truth."""
 
-    return {"reindexed": store.reindex_backends(), "backends": store.backend_status()}
+    return {"reindexed": store.reindex_backends(), "backends": build_infrastructure_status()}
 
 
 @app.get("/api/graph")
