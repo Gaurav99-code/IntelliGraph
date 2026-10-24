@@ -1,0 +1,256 @@
+"""Local persistence and hybrid lexical/graph retrieval for IntelliGraph."""
+
+from __future__ import annotations
+
+import json
+import math
+import re
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+from threading import Lock
+from typing import Any
+
+
+QUERY_STOPWORDS = {
+    "about", "after", "again", "also", "are", "because", "before", "being",
+    "between", "could", "does", "during", "from", "have", "how", "into", "is",
+    "its", "main", "more", "most", "other", "over", "same", "some", "such",
+    "than", "that", "the", "their", "there", "these", "they", "this", "those",
+    "through", "under", "was", "were", "what", "when", "where", "which", "while",
+    "who", "why", "will", "with", "would", "you", "your", "and", "but", "for",
+    "not", "our", "can", "all", "any", "out", "too",
+}
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _terms(value: str) -> set[str]:
+    return {
+        token.lower()
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", value)
+        if token.lower() not in QUERY_STOPWORDS
+    }
+
+
+class KnowledgeStore:
+    """A small JSON-backed store that works locally without external services.
+
+    The file format is intentionally straightforward.  It keeps the prototype
+    usable on a laptop and leaves a clean seam for replacing persistence with
+    Neo4j + ChromaDB later.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+        self._lock = Lock()
+        self.documents: dict[str, dict[str, Any]] = {}
+        self._load()
+
+    def _load(self) -> None:
+        if not self.path.exists():
+            return
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            self.documents = payload.get("documents", {})
+        except (OSError, json.JSONDecodeError):
+            # A broken local cache should not prevent the API from starting.
+            self.documents = {}
+
+    def _save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"version": 1, "updated_at": _now(), "documents": self.documents}
+        temporary = self.path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(self.path)
+
+    def add_document(self, document: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            document = {**document, "created_at": _now()}
+            self.documents[document["id"]] = document
+            self._save()
+            return document
+
+    def delete_document(self, document_id: str) -> bool:
+        with self._lock:
+            existed = document_id in self.documents
+            if existed:
+                del self.documents[document_id]
+                self._save()
+            return existed
+
+    def list_documents(self) -> list[dict[str, Any]]:
+        return [self._document_summary(document) for document in self.documents.values()]
+
+    def get_document(self, document_id: str) -> dict[str, Any] | None:
+        return self.documents.get(document_id)
+
+    @staticmethod
+    def _document_summary(document: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": document["id"],
+            "name": document["name"],
+            "created_at": document.get("created_at"),
+            "characters": len(document.get("text", "")),
+            "chunks": len(document.get("chunks", [])),
+            "topics": [topic["label"] for topic in document.get("topics", [])],
+            "entities": len(document.get("entities", [])),
+        }
+
+    def graph(self, document_id: str | None = None) -> dict[str, list[dict[str, Any]]]:
+        documents = [self.documents[document_id]] if document_id and document_id in self.documents else list(self.documents.values())
+        nodes: dict[str, dict[str, Any]] = {}
+        edges: dict[str, dict[str, Any]] = {}
+
+        def add_node(node_id: str, label: str, node_type: str, **extra: Any) -> None:
+            node = nodes.setdefault(node_id, {"id": node_id, "label": label, "type": node_type, "weight": 0})
+            node["weight"] += 1
+            node.update(extra)
+
+        def add_edge(source: str, target: str, relation: str) -> None:
+            edge_id = f"{source}|{relation}|{target}"
+            edge = edges.setdefault(
+                edge_id,
+                {"id": edge_id, "source": source, "target": target, "label": relation, "weight": 0},
+            )
+            edge["weight"] += 1
+
+        for document in documents:
+            document_node = f"document:{document['id']}"
+            add_node(document_node, document["name"], "document")
+            for topic in document.get("topics", []):
+                add_node(topic["id"], topic["label"], "topic", score=topic.get("score", 1))
+                add_edge(document_node, topic["id"], "has topic")
+            entity_ids: dict[str, str] = {}
+            for entity in document.get("entities", []):
+                entity_id = f"entity:{re.sub(r'[^a-z0-9]+', '-', entity.lower()).strip('-')}"
+                entity_ids[entity.casefold()] = entity_id
+                add_node(entity_id, entity, "entity")
+                add_edge(document_node, entity_id, "mentions")
+            for relationship in document.get("relationships", []):
+                source = entity_ids.get(relationship["source"].casefold())
+                target = entity_ids.get(relationship["target"].casefold())
+                if source and target:
+                    add_edge(source, target, relationship["relation"])
+
+        return {"nodes": list(nodes.values()), "edges": list(edges.values())}
+
+    def node_details(self, node_id: str) -> dict[str, Any] | None:
+        graph = self.graph()
+        node = next((item for item in graph["nodes"] if item["id"] == node_id), None)
+        if not node:
+            return None
+        connected_edges = [edge for edge in graph["edges"] if edge["source"] == node_id or edge["target"] == node_id]
+        return {"node": node, "edges": connected_edges}
+
+    def search(self, question: str, top_k: int = 5) -> dict[str, Any]:
+        query_terms = _terms(question)
+        if not query_terms:
+            return {"route": "factual", "matches": [], "topics": [], "paths": []}
+
+        thematic_markers = {"theme", "themes", "topic", "topics", "main", "overall", "across", "summarize", "summary"}
+        route = "thematic" if query_terms.intersection(thematic_markers) else "factual"
+        matches: list[dict[str, Any]] = []
+
+        for document in self.documents.values():
+            for chunk in document.get("chunks", []):
+                chunk_terms = _terms(chunk["text"])
+                overlap = len(query_terms & chunk_terms)
+                if overlap == 0:
+                    continue
+                # A mild length normalization favors focused chunks over long ones.
+                score = overlap / math.sqrt(max(len(chunk_terms), 1))
+                matches.append({
+                    "document_id": document["id"],
+                    "document_name": document["name"],
+                    "chunk_id": chunk["id"],
+                    "chunk_index": chunk["index"],
+                    "text": chunk["text"],
+                    "score": round(score, 4),
+                    "matched_terms": sorted(query_terms & chunk_terms),
+                })
+
+        matches.sort(key=lambda match: match["score"], reverse=True)
+        matches = matches[: max(1, min(top_k, 20))]
+
+        topic_scores: Counter[str] = Counter()
+        matched_document_ids = {match["document_id"] for match in matches}
+        for document in self.documents.values():
+            if document["id"] not in matched_document_ids:
+                continue
+            for topic in document.get("topics", []):
+                if topic["label"].lower() in query_terms or not matches:
+                    topic_scores[topic["label"]] += topic.get("score", 1)
+                elif _terms(topic["label"]) & query_terms:
+                    topic_scores[topic["label"]] += topic.get("score", 1)
+
+        if route == "thematic" and not topic_scores:
+            for document in self.documents.values():
+                for topic in document.get("topics", []):
+                    topic_scores[topic["label"]] += topic.get("score", 1)
+
+        topics = [{"label": label, "score": score} for label, score in topic_scores.most_common(8)]
+        paths = self._supporting_paths(matches)
+        return {"route": route, "matches": matches, "topics": topics, "paths": paths}
+
+    def _supporting_paths(self, matches: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+        graph = self.graph()
+        labels = {node["id"]: node["label"] for node in graph["nodes"]}
+        paths: list[list[dict[str, Any]]] = []
+        for match in matches[:5]:
+            document_node = f"document:{match['document_id']}"
+            direct = [edge for edge in graph["edges"] if edge["source"] == document_node]
+            matched_terms = set(match.get("matched_terms", []))
+            relevant = [
+                edge
+                for edge in direct
+                if _terms(labels.get(edge["target"], "")) & matched_terms
+            ]
+            if relevant:
+                paths.append(relevant[:6])
+            elif direct:
+                paths.append(direct[:6])
+        return paths
+
+    def answer(self, question: str, top_k: int = 5) -> dict[str, Any]:
+        result = self.search(question, top_k)
+        matches = result["matches"]
+        if not self.documents:
+            answer = "Upload one or more documents before asking a question."
+        elif not matches and result["route"] == "thematic":
+            answer = "I could not find a direct match, so there is not enough grounded evidence for a theme summary."
+        elif not matches:
+            answer = "I could not find a grounded answer in the uploaded documents."
+        elif result["route"] == "thematic":
+            topic_text = ", ".join(topic["label"] for topic in result["topics"][:6])
+            answer = f"The strongest themes across the matching documents are: {topic_text or 'the matched passages'}."
+        else:
+            best = matches[0]
+            sentences = [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", best["text"]) if sentence.strip()]
+            sentence = max(
+                sentences,
+                key=lambda candidate: len(_terms(candidate) & set(best["matched_terms"])),
+                default=best["text"],
+            )
+            answer = sentence or best["text"]
+
+        return {
+            "question": question,
+            "answer": answer,
+            "route": result["route"],
+            "sources": [
+                {
+                    "document_id": match["document_id"],
+                    "document_name": match["document_name"],
+                    "chunk_id": match["chunk_id"],
+                    "chunk_index": match["chunk_index"],
+                    "score": match["score"],
+                    "text": match["text"],
+                }
+                for match in matches
+            ],
+            "topics": result["topics"],
+            "graph_paths": result["paths"],
+        }

@@ -1,0 +1,84 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Length 3018 >>
+stream
+BT
+/F1 17 Tf 54 742 Td (Type 2 Diabetes: Treatments and Medication Classes) Tj
+/F1 9 Tf 54 724 Td (Synthetic educational sample for IntelliGraph testing) Tj
+/F1 8 Tf 54 709 Td () Tj
+/F1 12 Tf 54 694 Td (Overview) Tj
+/F1 10 Tf 54 676 Td (This synthetic document maps treatment strategies used in type 2 diabetes research. It) Tj
+/F1 10 Tf 54 661 Td (is not a prescribing guide. Treatment selection depends on individual clinical factors,) Tj
+/F1 10 Tf 54 646 Td (safety considerations, preferences, cost, and monitoring requirements.) Tj
+/F1 10 Tf 54 631 Td (Most care pathways begin with nutrition, physical activity, weight management when) Tj
+/F1 10 Tf 54 616 Td (appropriate, sleep support, and education. Medication is added or adjusted when) Tj
+/F1 10 Tf 54 601 Td (lifestyle measures alone do not achieve the agreed glycemic target.) Tj
+/F1 12 Tf 54 586 Td (Metformin) Tj
+/F1 10 Tf 54 568 Td (Metformin is a widely studied first-line medicine. It primarily reduces hepatic glucose) Tj
+/F1 10 Tf 54 553 Td (production and can improve insulin sensitivity. Research often compares metformin with) Tj
+/F1 10 Tf 54 538 Td (newer therapies while considering effectiveness, tolerability, kidney function, and) Tj
+/F1 10 Tf 54 523 Td (cost.) Tj
+/F1 10 Tf 54 508 Td (Gastrointestinal side effects are commonly discussed in studies of metformin. Some) Tj
+/F1 10 Tf 54 493 Td (patients use a lower starting dose or an extended-release formulation, but decisions) Tj
+/F1 10 Tf 54 478 Td (belong to a qualified clinician.) Tj
+/F1 12 Tf 54 463 Td (GLP-1 receptor agonists) Tj
+/F1 10 Tf 54 445 Td (GLP-1 receptor agonists, including semaglutide, are connected to glucose-dependent) Tj
+/F1 10 Tf 54 430 Td (insulin secretion, appetite regulation, and weight reduction. Clinical research) Tj
+/F1 10 Tf 54 415 Td (evaluates their effects on HbA1c, body weight, cardiovascular outcomes, and) Tj
+/F1 10 Tf 54 400 Td (gastrointestinal tolerability.) Tj
+/F1 10 Tf 54 385 Td (The GLP-1 pathway is also related to obesity research because appetite and energy) Tj
+/F1 10 Tf 54 370 Td (balance can affect insulin resistance. This creates a graph connection between diabetes) Tj
+/F1 10 Tf 54 355 Td (treatment, weight management, and cardiovascular risk reduction.) Tj
+/F1 12 Tf 54 340 Td (Insulin and combination therapy) Tj
+/F1 10 Tf 54 322 Td (Insulin therapy may be considered when glucose levels remain substantially elevated,) Tj
+/F1 10 Tf 54 307 Td (when beta-cell function declines, or during specific clinical situations. Basal insulin) Tj
+/F1 10 Tf 54 292 Td (is commonly studied as a way to reduce fasting glucose, while other regimens address) Tj
+/F1 10 Tf 54 277 Td (meal-related glucose excursions.) Tj
+/F1 10 Tf 54 262 Td (Combination therapy connects medication classes with different mechanisms. For example,) Tj
+/F1 10 Tf 54 247 Td (a clinician may evaluate whether a treatment that improves insulin sensitivity should be) Tj
+/F1 10 Tf 54 232 Td (combined with a therapy that changes appetite or insulin secretion.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 388 >>
+stream
+BT
+/F1 12 Tf 54 742 Td (Connections for the knowledge graph) Tj
+/F1 10 Tf 54 724 Td (Metformin is connected to hepatic glucose production and insulin sensitivity.) Tj
+/F1 10 Tf 54 709 Td (Semaglutide is connected to the GLP-1 receptor pathway, appetite regulation, HbA1c, and) Tj
+/F1 10 Tf 54 694 Td (weight reduction. Insulin is connected to beta-cell decline and glucose control.) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000127 00000 n 
+0000000197 00000 n 
+0000003267 00000 n 
+0000003393 00000 n 
+0000003832 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+3958
+%%EOF
