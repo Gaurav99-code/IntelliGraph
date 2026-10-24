@@ -4,7 +4,9 @@ async function request(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, options)
   const body = await response.json().catch(() => null)
   if (!response.ok) {
-    throw new Error(body?.detail || `Request failed (${response.status})`)
+    const error = new Error(body?.detail || `Request failed (${response.status})`)
+    error.status = response.status
+    throw error
   }
   return body
 }
@@ -18,7 +20,12 @@ export function getGraph() {
 }
 
 export function getInfrastructure() {
-  return request('/api/infrastructure')
+  return request('/api/infrastructure').catch((error) => {
+    // Older locally running backends do not expose this endpoint yet, but
+    // /api/health includes the same backend status needed by the header.
+    if (error.status !== 404) throw error
+    return request('/api/health').then((body) => body?.backends || {})
+  })
 }
 
 export function uploadDocuments(files) {
@@ -36,6 +43,18 @@ export function queryKnowledgeBase(question, topK = 5) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ question, top_k: topK }),
+  })
+}
+
+export function getLogs(source = 'all', limit = 250) {
+  return request(`/api/logs?source=${encodeURIComponent(source)}&limit=${limit}`)
+}
+
+export function logClientEvent(level, message, context = {}) {
+  return request('/api/logs/client', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ level, message, context }),
   })
 }
 

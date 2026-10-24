@@ -3,21 +3,28 @@
 from __future__ import annotations
 
 import os
+import logging
+import time
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from .answer_generator import generate_grounded_answer
 from .document_processor import process_document
 from .graph_store import Neo4jGraphStore
 from .llm_client import LLMClient
+from .logging_config import configure_logging, read_log_lines
 from .store import KnowledgeStore
 from .vector_store import ChromaVectorStore
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
+LOG_DIR = BASE_DIR / "logs"
+configure_logging(LOG_DIR)
+logger = logging.getLogger("intelligraph.backend")
 DATA_PATH = Path(os.getenv("INTELLIGRAPH_DATA_PATH", BASE_DIR / "data" / "knowledge_base.json"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
 CHROMA_PATH = Path(os.getenv("CHROMA_PATH", BASE_DIR / "data" / "chroma"))
@@ -55,8 +62,18 @@ class QueryResponse(BaseModel):
     answer: str
     route: str
     sources: list[dict]
+    citations: list[dict]
     topics: list[dict]
     graph_paths: list[list[dict]]
+    answer_method: str
+    confidence: float
+    insufficient_evidence: bool
+
+
+class ClientLogRequest(BaseModel):
+    level: str = Field(default="info", max_length=20)
+    message: str = Field(min_length=1, max_length=2000)
+    context: dict[str, str] = Field(default_factory=dict)
 
 
 # Create FastAPI application
@@ -65,6 +82,19 @@ app = FastAPI(
     description="Topic-Augmented Knowledge Graph Backend",
     version="1.0.0",
 )
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.info("%s %s -> %s (%.1fms)", request.method, request.url.path, response.status_code, elapsed_ms)
+        return response
+    except Exception:
+        logger.exception("Unhandled error during %s %s", request.method, request.url.path)
+        raise
 
 
 # Allow React frontend to access our backend
@@ -104,6 +134,32 @@ def infrastructure_status():
     """Return the configured vector and graph backend status."""
 
     return build_infrastructure_status()
+
+
+@app.get("/api/logs")
+def application_logs(source: str = "all", limit: int = 250):
+    """Return recent local backend/frontend log lines for the in-app viewer."""
+
+    source = source.lower().strip()
+    if source not in {"all", "backend", "frontend"}:
+        raise HTTPException(status_code=400, detail="source must be all, backend, or frontend")
+    bounded_limit = max(1, min(limit, 500))
+    return {"source": source, "logs": read_log_lines(LOG_DIR, source, bounded_limit)}
+
+
+@app.post("/api/logs/client", status_code=204)
+def client_log(payload: ClientLogRequest):
+    """Accept short, non-sensitive frontend events for the local frontend log."""
+
+    safe_context = {str(key)[:80]: str(value)[:200] for key, value in payload.context.items()}
+    message = payload.message.replace("\r", " ").replace("\n", " ")
+    frontend_logger = logging.getLogger("intelligraph.frontend")
+    level = payload.level.lower().strip()
+    if level not in {"debug", "info", "warning", "error", "critical"}:
+        level = "info"
+    log_method = getattr(frontend_logger, level)
+    log_method("%s | context=%s", message, safe_context)
+    return None
 
 
 @app.get("/api/documents")
@@ -184,4 +240,40 @@ def get_graph_node(node_id: str):
 def query_knowledge_base(request: QueryRequest):
     """Route a thematic or factual question and return grounded evidence."""
 
-    return store.answer(request.question, request.top_k)
+    search_result = store.search(request.question, request.top_k)
+    sources = [
+        {
+            "document_id": match["document_id"],
+            "document_name": match["document_name"],
+            "chunk_id": match["chunk_id"],
+            "chunk_index": match["chunk_index"],
+            "score": match["score"],
+            "text": match["text"],
+        }
+        for match in search_result["matches"]
+    ]
+    generated = generate_grounded_answer(
+        request.question,
+        sources,
+        search_result["paths"],
+        search_result["topics"],
+        llm_client,
+    )
+    source_by_id = {f"source-{index}": source for index, source in enumerate(sources)}
+    citations = [
+        {"id": citation_id, **source_by_id[citation_id]}
+        for citation_id in generated["citation_ids"]
+        if citation_id in source_by_id
+    ]
+    return {
+        "question": request.question,
+        "answer": generated["answer"],
+        "route": search_result["route"],
+        "sources": sources,
+        "citations": citations,
+        "topics": search_result["topics"],
+        "graph_paths": search_result["paths"],
+        "answer_method": generated["answer_method"],
+        "confidence": generated["confidence"],
+        "insufficient_evidence": generated["insufficient_evidence"],
+    }

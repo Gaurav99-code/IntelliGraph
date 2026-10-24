@@ -199,6 +199,7 @@ export default function GraphPanel({ focus, setFocus, graph }) {
         link,
         out: idOf(link.source) === focus.id,
         node: state.byId[idOf(link.source) === focus.id ? idOf(link.target) : idOf(link.source)],
+        documentNode: [state.byId[idOf(link.source)], state.byId[idOf(link.target)]].find((node) => node?.type === 'document'),
       }))
       setInfo({ node: state.selected, neighbours })
     } else {
@@ -233,6 +234,7 @@ export default function GraphPanel({ focus, setFocus, graph }) {
   }
 
   const legend = (type) => setFocus(focus?.kind === 'type' && focus.type === type ? { kind: 'reset' } : { kind: 'type', type })
+  const hasGraphData = (graph.nodes || []).length > 0 || (graph.edges || []).length > 0
 
   return (
     <div className="graph" ref={wrap}>
@@ -242,8 +244,52 @@ export default function GraphPanel({ focus, setFocus, graph }) {
         <span className="sp" />
         <button className="leg" onClick={() => setFocus({ kind: 'reset' })}>Reset view</button>
       </div>
+      {!hasGraphData && <div className="graph-empty-state">
+        <div className="graph-visual" aria-hidden="true">
+          <span className="orbit orbit-one" />
+          <span className="orbit orbit-two" />
+          <span className="orbit-dot dot-one" />
+          <span className="orbit-dot dot-two" />
+          <span className="orbit-dot dot-three" />
+          <div className="graph-core">
+            <svg className="pdf-icon" viewBox="0 0 64 76" role="img" aria-label="PDF document">
+              <path d="M12 3h27l13 13v57H12z" fill="none" stroke="currentColor" strokeWidth="4" strokeLinejoin="round" />
+              <path d="M39 3v14h13" fill="none" stroke="currentColor" strokeWidth="4" strokeLinejoin="round" />
+              <path d="M20 48h24M20 58h18" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+              <text x="18" y="39" fill="currentColor" fontSize="11" fontWeight="800">PDF</text>
+            </svg>
+          </div>
+        </div>
+        <div className="graph-empty-copy">
+          <div className="info-kicker">Your visual research map</div>
+          <h3>See how ideas connect</h3>
+          <p>Upload a document and IntelliGraph will turn its people, topics, concepts, and evidence into an explorable map.</p>
+          <div className="graph-flow">
+            <span><b>1</b> Read</span><i>→</i><span><b>2</b> Connect</span><i>→</i><span><b>3</b> Explain</span>
+          </div>
+        </div>
+      </div>}
       <div className="tip" ref={tip} />
-      {info && <div className="info"><h3>{info.node.label}</h3><div className="t">{labelOf(info.node)} · {info.neighbours.length} connections</div>{info.node.description && <div>{info.node.description}</div>}{info.node.aliases?.length > 0 && <div className="t">Aliases: {info.node.aliases.join(', ')}</div>}<ul>{info.neighbours.slice(0, 6).map((item, index) => <li key={index}>{item.out ? item.link.label || 'connects to' : `← ${item.link.label || 'connects to'}`} <b>{item.node?.label || 'unknown'}</b></li>)}</ul></div>}
+      {info && <div className="info">
+        <div className="info-kicker">{labelOf(info.node)}</div>
+        <h3>{info.node.label}</h3>
+        <div className="t">{info.node.entity_type || info.node.type || 'Graph node'} · {info.neighbours.length} connections</div>
+        <div className="info-stats">
+          {info.node.weight != null && <span className="info-stat">Weight {info.node.weight}</span>}
+          {info.node.score != null && <span className="info-stat">Score {info.node.score}</span>}
+          {info.node.extraction_method && <span className="info-stat">{info.node.extraction_method}</span>}
+        </div>
+        {info.node.description && <div>{info.node.description}</div>}
+        {info.node.aliases?.length > 0 && <div className="t">Aliases: {info.node.aliases.join(', ')}</div>}
+        <div className="info-section-title">Connected evidence</div>
+        <div className="info-connections">
+          {info.neighbours.slice(0, 8).map((item, index) => <button type="button" className="info-connection" key={index} onClick={() => item.node?.id && setFocus({ kind: 'node', id: item.node.id })}>
+            <span className="info-connection-title">{item.out ? item.link.label || 'connects to' : `← ${item.link.label || 'connects to'}`} <b>{item.node?.label || 'unknown'}</b></span>
+            {item.link.evidence && <span className="info-connection-evidence">Evidence: {item.link.evidence}</span>}
+            {(item.documentNode?.label || item.link.document_id || item.link.chunk_id) && <span className="info-connection-meta">{item.documentNode?.label && `Document: ${item.documentNode.label}`}{item.link.document_id && item.documentNode?.label && ' · '}{item.link.document_id && `ID: ${item.link.document_id}`}{(item.link.document_id || item.documentNode?.label) && item.link.chunk_id && ' · '}{item.link.chunk_id && `Chunk: ${item.link.chunk_id}`}</span>}
+          </button>)}
+        </div>
+      </div>}
     </div>
   )
 }

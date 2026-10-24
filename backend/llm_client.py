@@ -68,11 +68,15 @@ class LLMClient:
     def status(self) -> dict[str, Any]:
         """Return safe configuration status without exposing credentials."""
 
+        if self.provider == "ollama":
+            configured = bool(self.model)
+        else:
+            configured = bool(self.api_key)
         return {
-            "llm_enabled": self.enabled and bool(self.api_key),
+            "llm_enabled": self.enabled and configured,
             "llm_provider": self.provider,
             "llm_model": self.model,
-            "llm_configured": bool(self.api_key),
+            "llm_configured": configured,
         }
 
     def generate_json(self, system_prompt: str, user_prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
@@ -80,9 +84,9 @@ class LLMClient:
 
         if not self.enabled:
             raise LLMConfigurationError("LLM extraction is disabled")
-        if not self.api_key:
+        if self.provider != "ollama" and not self.api_key:
             raise LLMConfigurationError("LLM_ENABLED=true requires LLM_API_KEY")
-        if self.provider not in {"openai", "openai-compatible"}:
+        if self.provider not in {"openai", "openai-compatible", "ollama"}:
             raise LLMConfigurationError(f"Unsupported LLM_PROVIDER: {self.provider}")
 
         last_error: Exception | None = None
@@ -102,8 +106,13 @@ class LLMClient:
                 from openai import OpenAI
             except ImportError as exc:  # pragma: no cover - dependency setup dependent
                 raise LLMConfigurationError("Install the 'openai' package to enable LLM extraction") from exc
-            kwargs: dict[str, Any] = {"api_key": self.api_key, "timeout": self.timeout}
+            api_key = self.api_key
+            if self.provider == "ollama" and not api_key:
+                api_key = "ollama"
+            kwargs: dict[str, Any] = {"api_key": api_key, "timeout": self.timeout}
             base_url = os.getenv("LLM_BASE_URL")
+            if self.provider == "ollama" and not base_url:
+                base_url = "http://localhost:11434/v1"
             if base_url:
                 kwargs["base_url"] = base_url
             self._client = OpenAI(**kwargs)
