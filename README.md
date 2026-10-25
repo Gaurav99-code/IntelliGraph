@@ -137,10 +137,43 @@ Frontend URL:
 http://localhost:5173
 ```
 
-To use another backend URL:
+The frontend uses Vite's same-origin `/api` proxy by default, targeting the
+backend at `http://localhost:8000`. This avoids accidentally sending log and
+application requests to the Vite server itself, which would return `Not Found`.
+
+If the backend is running on another port, create `frontend/.env.local`:
 
 ```powershell
-$env:VITE_API_BASE_URL="http://localhost:8000"
+Copy-Item frontend\.env.example frontend\.env.local
+```
+
+Then edit the target, for example:
+
+```env
+VITE_API_PROXY_TARGET=http://localhost:8767
+```
+
+Restart Vite after changing this file. For a frontend hosted separately from
+the Vite server, set a direct API URL instead:
+
+```env
+VITE_API_BASE_URL=https://your-backend.example.com
+```
+
+For the standard local setup, start the backend on port 8000 before opening the
+frontend:
+
+```powershell
+venv\Scripts\python.exe -m uvicorn backend.main:app --reload --env-file .env --port 8000
+```
+
+If the log viewer still shows `Not Found`, restart the backend from the current
+checkout so that it loads the `/api/logs` route, then restart Vite so it loads
+the current proxy configuration.
+
+To run the frontend after changing its environment:
+
+```powershell
 npm run dev
 ```
 

@@ -1,4 +1,6 @@
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
+// In local Vite development, use the same-origin /api proxy. A full URL can
+// still be supplied for a separately hosted frontend or a custom backend port.
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, options)
