@@ -8,4 +8,5 @@ venv/
 frontend/node_modules/
 frontend/dist/
 *.log
+logs/*.jsonl
 .opencode/

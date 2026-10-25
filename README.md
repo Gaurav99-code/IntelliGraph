@@ -269,6 +269,7 @@ The backend creates rotating local logs:
 ```text
 logs/backend.log
 logs/frontend.log
+logs/activity.jsonl
 ```
 
 Log endpoints:
@@ -280,9 +281,24 @@ GET /api/logs?source=frontend
 POST /api/logs/client
 ```
 
-The UI's **See logs** button provides a tabbed, scrollable log viewer. Query
-contents are not written to logs; only safe metadata such as question length and
-request status is recorded.
+The UI's **See logs** button provides a tabbed, scrollable activity viewer. Each
+entry includes the local timestamp, source, action, message, uploaded filename
+when applicable, document ID, byte count, extraction method, query route, and
+other safe metadata. Examples include:
+
+- `document_upload_started` with the selected filename(s).
+- `document_uploaded` with filename, timestamp, document ID, bytes, chunks, and
+  extraction method.
+- `document_deleted` with the document ID.
+- `query_completed` with route, answer method, and evidence counts.
+- `indexes_rebuilt` after a vector/graph rebuild.
+
+The activity log does not store full question text or document contents; only
+safe metadata such as question length and request status is recorded.
+
+After pulling a new version, restart both the backend and Vite dev server. A
+browser tab connected to an older Vite process can send `/api/logs` to the wrong
+server and display `Not Found` even when the current code has the route.
 
 ## Storage and optional Neo4j
 

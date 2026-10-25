@@ -6,6 +6,7 @@ import os
 import logging
 import time
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -16,7 +17,7 @@ from .answer_generator import generate_grounded_answer
 from .document_processor import process_document
 from .graph_store import Neo4jGraphStore
 from .llm_client import LLMClient
-from .logging_config import configure_logging, read_log_lines
+from .logging_config import configure_logging, read_activity_events, read_log_lines, record_activity
 from .store import KnowledgeStore
 from .vector_store import ChromaVectorStore
 
@@ -73,7 +74,7 @@ class QueryResponse(BaseModel):
 class ClientLogRequest(BaseModel):
     level: str = Field(default="info", max_length=20)
     message: str = Field(min_length=1, max_length=2000)
-    context: dict[str, str] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
 
 
 # Create FastAPI application
@@ -138,27 +139,36 @@ def infrastructure_status():
 
 @app.get("/api/logs")
 def application_logs(source: str = "all", limit: int = 250):
-    """Return recent local backend/frontend log lines for the in-app viewer."""
+    """Return recent raw lines and structured activity events for the viewer."""
 
     source = source.lower().strip()
     if source not in {"all", "backend", "frontend"}:
         raise HTTPException(status_code=400, detail="source must be all, backend, or frontend")
     bounded_limit = max(1, min(limit, 500))
-    return {"source": source, "logs": read_log_lines(LOG_DIR, source, bounded_limit)}
+    return {
+        "source": source,
+        "logs": read_log_lines(LOG_DIR, source, bounded_limit),
+        "events": read_activity_events(LOG_DIR, source, bounded_limit),
+    }
 
 
 @app.post("/api/logs/client", status_code=204)
 def client_log(payload: ClientLogRequest):
     """Accept short, non-sensitive frontend events for the local frontend log."""
 
-    safe_context = {str(key)[:80]: str(value)[:200] for key, value in payload.context.items()}
+    safe_context = {str(key)[:80]: str(value)[:500] for key, value in payload.context.items()}
     message = payload.message.replace("\r", " ").replace("\n", " ")
-    frontend_logger = logging.getLogger("intelligraph.frontend")
     level = payload.level.lower().strip()
     if level not in {"debug", "info", "warning", "error", "critical"}:
         level = "info"
-    log_method = getattr(frontend_logger, level)
-    log_method("%s | context=%s", message, safe_context)
+    record_activity(
+        LOG_DIR,
+        source="frontend",
+        action=message,
+        message=message.replace("_", " ").capitalize(),
+        details=safe_context,
+        level=level,
+    )
     return None
 
 
@@ -184,7 +194,22 @@ def get_document(document_id: str):
 @app.delete("/api/documents/{document_id}")
 def delete_document(document_id: str):
     if not store.delete_document(document_id):
+        record_activity(
+            LOG_DIR,
+            source="backend",
+            action="document_delete_failed",
+            message="Document delete failed",
+            details={"document_id": document_id},
+            level="error",
+        )
         raise HTTPException(status_code=404, detail="Document not found")
+    record_activity(
+        LOG_DIR,
+        source="backend",
+        action="document_deleted",
+        message="Document deleted",
+        details={"document_id": document_id},
+    )
     return {"deleted": True, "document_id": document_id}
 
 
@@ -195,6 +220,13 @@ async def upload_documents(files: list[UploadFile] = File(...)):
     if not files:
         raise HTTPException(status_code=400, detail="At least one file is required")
 
+    record_activity(
+        LOG_DIR,
+        source="backend",
+        action="document_upload_started",
+        message="Document upload started",
+        details={"file_names": [file.filename or "untitled.txt" for file in files], "file_count": len(files)},
+    )
     uploaded: list[dict] = []
     for file in files:
         content = await file.read()
@@ -207,9 +239,30 @@ async def upload_documents(files: list[UploadFile] = File(...)):
         try:
             document = process_document(str(uuid4()), filename, content, llm_client=llm_client)
         except ValueError as exc:
+            record_activity(
+                LOG_DIR,
+                source="backend",
+                action="document_upload_failed",
+                message=f"Could not process {filename}",
+                details={"file_name": filename, "error": str(exc)},
+                level="error",
+            )
             raise HTTPException(status_code=422, detail=f"Could not process {filename}: {exc}") from exc
         stored = store.add_document(document)
         uploaded.append(store._document_summary(stored))
+        record_activity(
+            LOG_DIR,
+            source="backend",
+            action="document_uploaded",
+            message=f"Uploaded {filename}",
+            details={
+                "file_name": filename,
+                "document_id": stored.get("id"),
+                "bytes": len(content),
+                "chunks": len(stored.get("chunks", [])),
+                "extraction_methods": sorted({chunk.get("extraction_method", "unknown") for chunk in stored.get("chunks", [])}),
+            },
+        )
 
     return {"documents": uploaded, "graph": store.graph(), "backends": build_infrastructure_status()}
 
@@ -218,7 +271,15 @@ async def upload_documents(files: list[UploadFile] = File(...)):
 def rebuild_indexes():
     """Rebuild Chroma and Neo4j indexes from the local document source of truth."""
 
-    return {"reindexed": store.reindex_backends(), "backends": build_infrastructure_status()}
+    result = store.reindex_backends()
+    record_activity(
+        LOG_DIR,
+        source="backend",
+        action="indexes_rebuilt",
+        message="Vector and graph indexes rebuilt",
+        details={"documents": len(store.documents)},
+    )
+    return {"reindexed": result, "backends": build_infrastructure_status()}
 
 
 @app.get("/api/graph")
@@ -265,6 +326,20 @@ def query_knowledge_base(request: QueryRequest):
         for citation_id in generated["citation_ids"]
         if citation_id in source_by_id
     ]
+    record_activity(
+        LOG_DIR,
+        source="backend",
+        action="query_completed",
+        message="Knowledge-base query completed",
+        details={
+            "question_length": len(request.question),
+            "route": search_result["route"],
+            "answer_method": generated["answer_method"],
+            "source_count": len(sources),
+            "citation_count": len(citations),
+            "insufficient_evidence": generated["insufficient_evidence"],
+        },
+    )
     return {
         "question": request.question,
         "answer": generated["answer"],

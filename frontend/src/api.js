@@ -2,8 +2,10 @@
 // still be supplied for a separately hosted frontend or a custom backend port.
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
-async function request(path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, options)
+const FALLBACK_API_URL = (import.meta.env.VITE_API_FALLBACK_URL || 'http://localhost:8000').replace(/\/$/, '')
+
+async function request(path, options = {}, baseUrl = API_BASE_URL) {
+  const response = await fetch(`${baseUrl}${path}`, options)
   const body = await response.json().catch(() => null)
   if (!response.ok) {
     const error = new Error(body?.detail || `Request failed (${response.status})`)
@@ -49,7 +51,13 @@ export function queryKnowledgeBase(question, topK = 5) {
 }
 
 export function getLogs(source = 'all', limit = 250) {
-  return request(`/api/logs?source=${encodeURIComponent(source)}&limit=${limit}`)
+  const path = `/api/logs?source=${encodeURIComponent(source)}&limit=${limit}`
+  return request(path).catch((error) => {
+    // This keeps the viewer usable when an older Vite process is still serving
+    // the page without the /api proxy. The backend still needs to be running.
+    if (error.status !== 404 || FALLBACK_API_URL === API_BASE_URL) throw error
+    return request(path, {}, FALLBACK_API_URL)
+  })
 }
 
 export function logClientEvent(level, message, context = {}) {

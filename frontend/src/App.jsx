@@ -38,7 +38,7 @@ export default function App() {
   const [deletingId, setDeletingId] = useState(null)
   const [infrastructure, setInfrastructure] = useState(null)
   const [showLogs, setShowLogs] = useState(false)
-  const [logState, setLogState] = useState({ logs: { backend: [], frontend: [] }, loading: false, error: '' })
+  const [logState, setLogState] = useState({ logs: { backend: [], frontend: [] }, events: [], loading: false, error: '' })
   const [fullscreenSection, setFullscreenSection] = useState(null)
   const researchRef = useRef(null)
   const graphRef = useRef(null)
@@ -90,7 +90,7 @@ export default function App() {
     setLogState((current) => ({ ...current, loading: true, error: '' }))
     try {
       const response = await getLogs(source)
-      setLogState({ logs: response.logs || { backend: [], frontend: [] }, loading: false, error: '' })
+      setLogState({ logs: response.logs || { backend: [], frontend: [] }, events: response.events || [], loading: false, error: '' })
     } catch (err) {
       setLogState((current) => ({ ...current, loading: false, error: err.message }))
     }
@@ -114,9 +114,10 @@ export default function App() {
 
   const ingest = async (files) => {
     setError('')
-    void logClientEvent('info', 'document_upload_started', { file_count: files.length })
+    void logClientEvent('info', 'document_upload_started', { file_count: files.length, file_names: files.map((file) => file.name) })
     try {
       const response = await uploadDocuments(files)
+      void logClientEvent('info', 'document_upload_completed', { file_names: files.map((file) => file.name), document_count: response.documents.length })
       setDocs((current) => [...current, ...response.documents])
       setGraph(response.graph)
       setInfrastructure(response.backends)
@@ -133,6 +134,7 @@ export default function App() {
     setDeletingId(documentId)
     try {
       await deleteDocument(documentId)
+      void logClientEvent('info', 'document_deleted', { document_id: documentId })
       const [documentResponse, graphResponse, infrastructureResponse] = await Promise.all([getDocuments(), getGraph(), getInfrastructure()])
       setDocs(documentResponse.documents)
       setGraph(graphResponse)
@@ -153,6 +155,7 @@ export default function App() {
     void logClientEvent('info', 'query_started', { question_length: String(question).length })
     try {
       const result = await queryKnowledgeBase(question)
+      void logClientEvent('info', 'query_completed', { route: result.route, answer_method: result.answer_method, source_count: result.sources?.length || 0 })
       setMsgs((current) => current.map((message) => (message.id === id ? { role: 'a', result, question } : message)))
       const evidence = validGraphEdges(result?.graph_paths)
       const evidenceNodes = [...new Set(evidence.flatMap(({ sourceId, targetId }) => [sourceId, targetId].filter(Boolean)))]

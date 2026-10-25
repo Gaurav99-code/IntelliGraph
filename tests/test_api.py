@@ -67,7 +67,8 @@ def test_upload_and_delete_endpoints(tmp_path: Path, monkeypatch):
     assert client.get("/api/documents").json()["documents"] == []
 
 
-def test_logs_endpoint_and_frontend_log_event():
+def test_logs_endpoint_and_frontend_log_event(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(main, "LOG_DIR", tmp_path / "logs")
     client = TestClient(main.app)
     marker = "test-frontend-log-event"
     logged = client.post(
@@ -78,6 +79,24 @@ def test_logs_endpoint_and_frontend_log_event():
     response = client.get("/api/logs?source=frontend&limit=25")
     assert response.status_code == 200
     assert marker in "\n".join(response.json()["logs"]["frontend"])
+    assert response.json()["events"][0]["action"] == marker
+    assert response.json()["events"][0]["source"] == "frontend"
+
+
+def test_upload_creates_user_visible_activity_event(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(main, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setattr(main, "store", KnowledgeStore(tmp_path / "knowledge.json"))
+    monkeypatch.setattr(main, "llm_client", LLMClient(enabled=False))
+    response = TestClient(main.app).post(
+        "/api/documents/upload",
+        files=[("files", ("visible-log.txt", b"Metformin improves insulin sensitivity.", "text/plain"))],
+    )
+
+    assert response.status_code == 200
+    events = TestClient(main.app).get("/api/logs?source=backend&limit=25").json()["events"]
+    uploaded = next(event for event in events if event["action"] == "document_uploaded")
+    assert uploaded["details"]["file_name"] == "visible-log.txt"
+    assert uploaded["timestamp"]
 
 
 def test_upload_query_end_to_end_and_disabled_llm_fallback(tmp_path: Path, monkeypatch):
